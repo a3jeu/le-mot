@@ -71,6 +71,8 @@ header{background:var(--bar);flex:0 0 auto;padding-top:env(safe-area-inset-top)}
 .tile{border:2px solid var(--border);display:flex;align-items:center;justify-content:center;
   font-weight:800;text-transform:uppercase;line-height:1;background:transparent}
 .tile.filled{background:var(--tile-gray)}
+.row.active .tile{cursor:pointer}
+.tile.sel{border-color:var(--yellow);box-shadow:inset 0 -4px 0 var(--yellow)}
 .tile.pop{animation:pop .1s ease-out}
 .tile.correct{background:var(--green);border-color:var(--green);color:var(--on-color)}
 .tile.present{background:var(--yellow);border-color:var(--yellow);color:var(--on-color)}
@@ -197,6 +199,7 @@ header{background:var(--bar);flex:0 0 auto;padding-top:env(safe-area-inset-top)}
     <h2 id="helpTitle">Comment jouer</h2>
     <p>Trouvez le mot du jour en <b>6 essais</b>. Chaque essai doit être un mot français existant. Appuyez sur <b>Entrée</b> pour valider.</p>
     <p>Les accents ne comptent pas : tapez simplement les lettres.</p>
+    <p>Touchez une case pour y écrire ou effacer une lettre, dans l'ordre de votre choix.</p>
     <div class="ex" id="ex1"></div>
     <p>Le <b>R</b> est dans le mot, à la bonne place.</p>
     <div class="ex" id="ex2"></div>
@@ -337,10 +340,11 @@ function refreshHome(){
 function startGame(L){
   var day = todayIndex();
   var display = answerFor(L, day);
-  G = {L:L, day:day, display:display, answer:strip(display), state:getState(L, day), cur:''};
+  G = {L:L, day:day, display:display, answer:strip(display), state:getState(L, day), cur:blankRow(L), pos:0};
   buildBoard(); buildKeyboard();
   G.state.guesses.forEach(function(g, r){ paintRow(r, g, evaluate(g, G.answer), false); });
   updateKeys();
+  renderCurrent();
   layout();
   if (!load('seenHelp', false)){ save('seenHelp', true); openModal('helpModal'); }
 }
@@ -417,14 +421,18 @@ function layout(){
 window.addEventListener('resize', layout);
 
 function rowEl(r){ return boardEl.children[r]; }
+function blankRow(L){ var a = []; for (var i = 0; i < L; i++) a.push(''); return a; }
 
 function renderCurrent(){
+  boardEl.querySelectorAll('.row.active').forEach(function(x){ x.classList.remove('active'); });
   var r = G.state.guesses.length; if (r >= MAX_TRIES) return;
+  var playing = G.state.status === 'playing';
+  rowEl(r).classList.toggle('active', playing);
   var tiles = rowEl(r).children;
   for (var i = 0; i < G.L; i++){
     var ch = G.cur[i] || '';
     tiles[i].textContent = ch;
-    tiles[i].className = 'tile' + (ch ? ' filled' : '');
+    tiles[i].className = 'tile' + (ch ? ' filled' : '') + (playing && i === G.pos ? ' sel' : '');
   }
 }
 
@@ -464,20 +472,44 @@ function updateKeys(){
 function press(key){
   if (!G || busy || G.state.status !== 'playing' || anyModalOpen()) return;
   if (key === 'ENTER') return submit();
-  if (key === 'BACK'){ G.cur = G.cur.slice(0, -1); return renderCurrent(); }
-  if (/^[A-Z]$/.test(key) && G.cur.length < G.L){
-    G.cur += key; renderCurrent();
-    var t = rowEl(G.state.guesses.length).children[G.cur.length - 1];
+  if (key === 'LEFT'){ G.pos = Math.max(0, G.pos - 1); return renderCurrent(); }
+  if (key === 'RIGHT'){ G.pos = Math.min(G.L - 1, G.pos + 1); return renderCurrent(); }
+  if (key === 'BACK'){
+    // Efface la case sélectionnée ; si elle est vide, recule d'une case et l'efface.
+    if (G.pos >= G.L || !G.cur[G.pos]){ if (G.pos > 0) G.pos--; }
+    G.cur[G.pos] = '';
+    return renderCurrent();
+  }
+  if (/^[A-Z]$/.test(key) && G.pos < G.L){
+    var at = G.pos;
+    G.cur[at] = key;
+    G.pos = nextEmpty(at);
+    renderCurrent();
+    var t = rowEl(G.state.guesses.length).children[at];
     t.classList.remove('pop'); void t.offsetWidth; t.classList.add('pop');
   }
 }
 
+// Prochaine case vide après i (sinon la première vide) ; G.L si la ligne est pleine.
+function nextEmpty(i){
+  for (var j = i + 1; j < G.L; j++) if (!G.cur[j]) return j;
+  for (j = 0; j < i; j++) if (!G.cur[j]) return j;
+  return G.L;
+}
+
+function selectTile(i){
+  if (!G || busy || G.state.status !== 'playing' || anyModalOpen()) return;
+  G.pos = i; renderCurrent();
+}
+
 function submit(){
   var r = G.state.guesses.length;
-  if (G.cur.length < G.L){ shake(r); return toast('Pas assez de lettres'); }
-  if (!VALID[G.L].has(G.cur) && G.cur !== G.answer){ shake(r); return toast('Mot non reconnu'); }
-  var guess = G.cur, res = evaluate(guess, G.answer);
-  G.cur = '';
+  var guess = G.cur.join('');
+  if (guess.length < G.L){ shake(r); return toast('Pas assez de lettres'); }
+  if (!VALID[G.L].has(guess) && guess !== G.answer){ shake(r); return toast('Mot non reconnu'); }
+  var res = evaluate(guess, G.answer);
+  G.cur = blankRow(G.L); G.pos = 0;
+  rowEl(r).classList.remove('active');
   G.state.guesses.push(guess);
   var won = guess === G.answer, lost = !won && G.state.guesses.length >= MAX_TRIES;
   if (won || lost) G.state.status = won ? 'won' : 'lost';
@@ -495,7 +527,7 @@ function submit(){
       }, G.L * 100 + 300);
     } else if (lost){
       bigToast(LOSE_MSG[G.day % LOSE_MSG.length], 'Le mot était : ' + G.display, 'lose', 3200, function(){ busy = false; openStats(); });
-    } else busy = false;
+    } else { busy = false; renderCurrent(); }
   });
 }
 
@@ -522,11 +554,19 @@ document.addEventListener('keydown', function(e){
   if (e.key === 'Escape'){ closeModals(); return; }
   if (anyModalOpen()) return;
   if (e.key === 'Enter'){ e.preventDefault(); press('ENTER'); }
-  else if (e.key === 'Backspace'){ e.preventDefault(); press('BACK'); }
+  else if (e.key === 'Backspace' || e.key === 'Delete'){ e.preventDefault(); press('BACK'); }
+  else if (e.key === 'ArrowLeft'){ e.preventDefault(); press('LEFT'); }
+  else if (e.key === 'ArrowRight'){ e.preventDefault(); press('RIGHT'); }
   else if (e.key.length === 1){
     var k = strip(e.key);
     if (/^[A-Z]$/.test(k)) press(k);
   }
+});
+boardEl.addEventListener('click', function(e){
+  var t = e.target.closest('.tile'); if (!t) return;
+  var row = t.parentNode;
+  if (!row.classList.contains('active')) return;
+  selectTile(Array.prototype.indexOf.call(row.children, t));
 });
 kbEl.addEventListener('click', function(e){
   var b = e.target.closest('.key'); if (!b) return;
