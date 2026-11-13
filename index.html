@@ -135,6 +135,7 @@ header{background:var(--bar);flex:0 0 auto;padding-top:env(safe-area-inset-top)}
 .dist div{display:flex;align-items:center;font-weight:700;font-size:14px}
 .dist i{font-style:normal;background:#3a3a3a;padding:3px 8px;min-width:24px;text-align:right;font-weight:800}
 .dist i.cur{background:var(--green);color:var(--on-color)}
+.dist i.cur.lost{background:#a33;color:#fff}
 .endbox{display:flex;align-items:center;margin-top:22px}
 .endbox .btn{margin-left:14px}
 .endbox .next{flex:1;text-align:center}
@@ -239,7 +240,7 @@ header{background:var(--bar);flex:0 0 auto;padding-top:env(safe-area-inset-top)}
   </div>
 </div>
 
-<script src="words.js?v=1"></script>
+<script src="words.js?v=2"></script>
 <script>
 (function(){
 'use strict';
@@ -483,17 +484,18 @@ function press(key){
   if (/^[A-Z]$/.test(key) && G.pos < G.L){
     var at = G.pos;
     G.cur[at] = key;
-    G.pos = nextEmpty(at);
+    G.pos = nextPos(at);
     renderCurrent();
     var t = rowEl(G.state.guesses.length).children[at];
     t.classList.remove('pop'); void t.offsetWidth; t.classList.add('pop');
   }
 }
 
-// Prochaine case vide après i (sinon la première vide) ; G.L si la ligne est pleine.
-function nextEmpty(i){
-  for (var j = i + 1; j < G.L; j++) if (!G.cur[j]) return j;
-  for (j = 0; j < i; j++) if (!G.cur[j]) return j;
+// Case suivante après i, même si elle contient déjà une lettre (on l'écrase).
+// Après la dernière case : première case vide restante, sinon G.L (ligne pleine).
+function nextPos(i){
+  if (i + 1 < G.L) return i + 1;
+  for (var j = 0; j < G.L; j++) if (!G.cur[j]) return j;
   return G.L;
 }
 
@@ -607,10 +609,14 @@ function openStats(){
   $('statsGrid').innerHTML = [
     [s.played, 'Parties'], [pct, '% Victoires'], [streak, 'Série actuelle'], [s.maxStreak, 'Meilleure série']
   ].map(function(x){ return '<div><b>' + x[0] + '</b><span>' + x[1] + '</span></div>'; }).join('');
-  var max = Math.max.apply(null, s.dist.concat([1]));
-  var cur = G.state.status === 'won' ? G.state.guesses.length - 1 : -1;
-  $('dist').innerHTML = s.dist.map(function(n, i){
-    return '<div>' + (i + 1) + '<i class="' + (i === cur ? 'cur' : '') + '" style="width:' + Math.max(8, n / max * 100) + '%">' + n + '</i></div>';
+  // Dernière ligne « ✗ » : mots ratés (parties jouées non gagnées).
+  var rows = s.dist.concat([s.played - s.wins]);
+  var max = Math.max.apply(null, rows.concat([1]));
+  var cur = G.state.status === 'won' ? G.state.guesses.length - 1 : G.state.status === 'lost' ? MAX_TRIES : -1;
+  $('dist').innerHTML = rows.map(function(n, i){
+    var label = i < MAX_TRIES ? (i + 1) : '✗';
+    var cls = i === cur ? (i < MAX_TRIES ? 'cur' : 'cur lost') : '';
+    return '<div>' + label + '<i class="' + cls + '" style="width:' + Math.max(8, n / max * 100) + '%">' + n + '</i></div>';
   }).join('');
   var over = G.state.status !== 'playing';
   $('endbox').classList.toggle('hidden', !over);
